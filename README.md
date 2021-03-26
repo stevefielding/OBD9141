@@ -1,3 +1,6 @@
+# kline_test
+Created stand alone project directory that contains the library code and top level ino file. Works with ATSAM3X and MC3X kline txcvr
+
 OBD9141
 =======
 
