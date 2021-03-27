@@ -100,7 +100,7 @@ bool OBD9141::request9141(void* request, uint8_t request_len, uint8_t ret_len){
     this->serial->setTimeout(OBD9141_REQUEST_ANSWER_MS_PER_BYTE * ret_len + OBD9141_WAIT_FOR_REQUEST_ANSWER_TIMEOUT);
     memset(this->buffer, 0, ret_len+1);
     
-    //OBD9141print("Trying to get x bytes: "); OBD9141println(ret_len+1);
+    OBD9141print("Trying to get x bytes: "); OBD9141println(ret_len+1);
     if (this->serial->readBytes(this->buffer, ret_len+1)){
         // OBD9141print("R: ");
         // for (uint8_t i=0; i< (ret_len+1); i++){
@@ -366,18 +366,20 @@ bool OBD9141::init(){
     this->kline(true); delay(400);  // third pair
     this->kline(false); delay(400); // last pair
     this->kline(true); delay(200);  // stop bit
+    this->kline(true);  // stop bit
     // this last 200 ms delay could also be put in the setTimeout below.
     // But the spec says we have a stop bit.
 
     // done, from now on it the bus can be treated ad a 10400 baud serial port.
 
-    OBD9141println("Before setting port.");
+    //OBD9141println("Before setting port.");
     this->set_port(true);
     OBD9141println("After setting port.");
     uint8_t buffer[1];
 
     this->serial->setTimeout(300+200);
     // wait should be between 20 and 300 ms long
+    //this->serial->write(0x55);
 
     // read first value into buffer, should be 0x55
     if (this->serial->readBytes(buffer, 1)){
@@ -433,7 +435,8 @@ bool OBD9141::init(){
         OBD9141println("Timeout on 0xCC read.");
         return false;
     } else {
-        // OBD9141print("read 0xCC?: "); OBD9141println(buffer[0], HEX);
+        // OBD9141print("read 0xCC?: "); 
+        // OBD9141println(buffer[0], HEX);
         if ((buffer[0] == 0xCC)){ // done if this is inverse of 0x33
             delay(OBD9141_INIT_POST_INIT_DELAY);
             // this delay is not in the spec, but prevents requests immediately

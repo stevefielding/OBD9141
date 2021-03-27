@@ -1,5 +1,7 @@
 # kline_test
-Created stand alone project directory that contains the library code and top level ino file. Works with ATSAM3X and MC3X kline txcvr
+Created example kline_test. Works with ATSAM3X and MC3X kline txcvr. Tested with 1998 Toyota Camry. Deleted all the other examples.
+
+You need to clone or copy this repo to the location of your Arduino libraries. On my RPi running Raspbian Linux, that is ~/Arduino/libraries.
 
 OBD9141
 =======
