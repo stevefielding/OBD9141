@@ -20,7 +20,7 @@ OBD9141 obd;
 
 
 void setup(){
-    Serial.begin(9600);
+    Serial.begin(115200);
     delay(2000);
 
     pinMode(EN_PIN, OUTPUT);
@@ -39,7 +39,7 @@ void loop(){
     // call init first time to get the state machine started
     obd.init(true, &init_success);
     // call repeatedly until init is done
-    while (obd.init(false, &init_success));
+    while (!obd.init(false, &init_success));
 
     //bool init_success =  obd.initKWP();
     digitalWrite(LED_BUILTIN, HIGH);
@@ -55,26 +55,30 @@ void loop(){
         bool res = true;
         while(res){
           /*
-            res = obd.getCurrentPID(0x11, 1);
+            //res = obd.getCurrentPID(0x11, 1);
+            obd.request9141_stMach(0x11, 1);
             if (res){
                 Serial.print("Result 0x11 (throttle): ");
                 Serial.println(obd.readUint8());
             }
             */
-            res = obd.getCurrentPID(0x01, 4);
+            //res = obd.getCurrentPID(0x01, 4);
+            res = obd.request9141_stMach(0x01, 4);
             if (res){
                 Serial.print("Result 0x01 (supported PIDs): ");
                 Serial.println(obd.readUint32());
             }
             
-            res = obd.getCurrentPID(0x0C, 2);
+            //res = obd.getCurrentPID(0x0C, 2);
+            res = obd.request9141_stMach(0x0c, 2);
             if (res){
                 Serial.print("Result 0x0C (RPM): ");
                 Serial.println(obd.readUint16()/4);
             }
 
 /*
-            res = obd.getCurrentPID(0x0D, 1);
+            //res = obd.getCurrentPID(0x0D, 1);
+            res = request9141_stMach(0x0d, 1);
             if (res){
                 Serial.print("Result 0x0D (speed): ");
                 Serial.println(obd.readUint8());

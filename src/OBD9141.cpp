@@ -114,6 +114,66 @@ bool OBD9141::request9141(void* request, uint8_t request_len, uint8_t ret_len){
     }
 }
 
+
+
+
+
+bool OBD9141::request9141_stMach(uint8_t pid, uint8_t return_length){
+
+    bool success = false;
+    bool checksumPass = false;
+    bool serCharRxed = true;
+    uint8_t request_len = 5;
+    uint8_t ret_len = return_length + 5;
+    
+    uint8_t message[5] = {0x68, 0x6A, 0xF1, 0x01, pid};
+    // header of request is 5 long, first three are always constant.
+
+    uint8_t buf[request_len+1];
+    memcpy(buf, message, request_len); // copy request
+
+    buf[request_len] = this->checksum(&buf, request_len); // add the checksum
+
+    this->write(&buf, request_len+1);
+
+    // wait after the request, officially 30 ms, but we might as well wait
+    // for the data in the readBytes function.
+    
+    // set proper timeout
+    this->serial->setTimeout(OBD9141_REQUEST_ANSWER_MS_PER_BYTE * ret_len + OBD9141_WAIT_FOR_REQUEST_ANSWER_TIMEOUT);
+    memset(this->buffer, 0, ret_len+1);
+    
+    OBD9141print("Trying to get x bytes: "); OBD9141println(ret_len+1);
+    if (this->serial->readBytes(this->buffer, ret_len+1)){
+        // OBD9141print("R: ");
+        // for (uint8_t i=0; i< (ret_len+1); i++){
+            // OBD9141print(this->buffer[i]);OBD9141print(" ");
+        // };OBD9141println();
+        
+         checksumPass = (this->checksum(&(this->buffer[0]), ret_len) == this->buffer[ret_len]);// have data; return whether it is valid.
+    } else {
+        OBD9141println("Timeout on reading bytes.");
+        serCharRxed = false; // failed getting data.
+    }
+
+
+    if (this->buffer[4] != pid || serCharRxed == false || checksumPass == false)
+        return false;
+    else
+        return true;
+
+}
+
+
+
+
+
+
+
+
+
+
+
 uint8_t OBD9141::request(void* request, uint8_t request_len){
     if (use_kwp_)
     {
@@ -366,8 +426,8 @@ uint8_t v1=0, v2=0; // sent by car:  (either 0x08 or 0x94)
 
 // init is a state machine. It is init'd to an idle state
 // To start the state machine, call with resetStMach = true
-// Eventually with successive calls, init will eventually return
-// true to indicate that it has finished. The caller should check
+// With successive calls, init will eventually return
+// true to indicate that it has finished. The caller should then check
 // the value of success to determine if init was successful
 bool OBD9141::init(bool resetStMach, bool *success){
     bool initDone = false;

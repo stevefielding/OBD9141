@@ -148,6 +148,7 @@ class OBD9141{
          */
         bool request(void* request, uint8_t request_len, uint8_t ret_len);
         bool request9141(void* request, uint8_t request_len, uint8_t ret_len);
+        bool request9141_stMach(uint8_t pid, uint8_t return_length);
 
         /**
          * @brief Send a request with a variable number of return bytes.
