@@ -34,7 +34,13 @@ void loop(){
     Serial.println("Looping");
     digitalWrite(LED_BUILTIN, LOW);
 
-    bool init_success =  obd.init();
+    //bool init_success =  obd.init();
+    bool init_success;
+    // call init first time to get the state machine started
+    obd.init(true, &init_success);
+    // call repeatedly until init is done
+    while (obd.init(false, &init_success));
+
     //bool init_success =  obd.initKWP();
     digitalWrite(LED_BUILTIN, HIGH);
     Serial.print("init_success:");

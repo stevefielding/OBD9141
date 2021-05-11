@@ -352,101 +352,230 @@ uint16_t OBD9141::getTroubleCode(uint8_t index)
   return *reinterpret_cast<uint16_t*>(&(this->buffer[index*2 + 4]));
 }
 
-bool OBD9141::init(){
-    use_kwp_ = false;
-    // this function performs the ISO9141 5-baud 'slow' init.
-    this->set_port(false); // disable the port.
-    this->kline(true);
-    delay(OBD9141_INIT_IDLE_BUS_BEFORE); // no traffic on bus for 3 seconds.
-    OBD9141println("Before magic 5 baud.");
-    // next, send the startup 5 baud init..
-    this->kline(false); delay(200); // start
-    this->kline(true); delay(400);  // first two bits
-    this->kline(false); delay(400); // second pair
-    this->kline(true); delay(400);  // third pair
-    this->kline(false); delay(400); // last pair
-    this->kline(true); delay(200);  // stop bit
-    this->kline(true);  // stop bit
-    // this last 200 ms delay could also be put in the setTimeout below.
-    // But the spec says we have a stop bit.
+#define ONE_BIT_AT_5_BAUD 200
+enum initStates {INIT_IDLE, INIT_START, IDLE_BEFORE, MAGIC5_BIT_START, MAGIC5_BIT_START_DELAY,
+       MAGIC5_BIT1_2, MAGIC5_BIT1_2_DELAY,
+       MAGIC5_BIT3_4, MAGIC5_BIT3_4_DELAY ,
+       MAGIC5_BIT5_6, MAGIC5_BIT5_6_DELAY,
+       MAGIC5_BIT7_8, MAGIC5_BIT7_8_DELAY ,
+       MAGIC5_BIT_STOP, MAGIC5_BIT_STOP_DELAY ,
+       SET_SER_PORT , WAIT_0X55, WAIT_V1 , WAIT_V2 , WAIT_W4, WAIT_0XCC, SUCCESS_DELAY };
+int initCurrSt = INIT_IDLE;
+unsigned long startMillis = 0;
+uint8_t v1=0, v2=0; // sent by car:  (either 0x08 or 0x94)
 
-    // done, from now on it the bus can be treated ad a 10400 baud serial port.
-
-    //OBD9141println("Before setting port.");
-    this->set_port(true);
-    OBD9141println("After setting port.");
+// init is a state machine. It is init'd to an idle state
+// To start the state machine, call with resetStMach = true
+// Eventually with successive calls, init will eventually return
+// true to indicate that it has finished. The caller should check
+// the value of success to determine if init was successful
+bool OBD9141::init(bool resetStMach, bool *success){
+    bool initDone = false;
+    *success = false;
     uint8_t buffer[1];
 
-    this->serial->setTimeout(300+200);
-    // wait should be between 20 and 300 ms long
-    //this->serial->write(0x55);
+    if (resetStMach)
+        initCurrSt = INIT_START;
+    switch (initCurrSt) {
+      case INIT_IDLE:
+        // do nothing. Wait here until start requested
+	break;
+      case INIT_START:
+        use_kwp_ = false;
+        // this function performs the ISO9141 5-baud 'slow' init.
+        this->set_port(false); // disable the port.
+        this->kline(true);
+	initCurrSt = IDLE_BEFORE;
+	startMillis = millis();
+        OBD9141println("Before magic 5 baud.");
+	break;
+      case IDLE_BEFORE:
+        if (millis() - startMillis >= OBD9141_INIT_IDLE_BUS_BEFORE) // no traffic on bus for 3 seconds.
+	    initCurrSt = MAGIC5_BIT_START;
+        break;
 
-    // read first value into buffer, should be 0x55
-    if (this->serial->readBytes(buffer, 1)){
-        OBD9141print("First read is: "); OBD9141println(buffer[0]);
-        if (buffer[0] != 0x55){
-            return false;
-        }
-    } else {
-        OBD9141println("Timeout on read 0x55.");
-        return false;
+     case MAGIC5_BIT_START:
+        // next, send the startup 5 baud init..
+        this->kline(false); // start
+	startMillis = millis();
+	initCurrSt = MAGIC5_BIT_START_DELAY;
+	break;
+      case MAGIC5_BIT_START_DELAY:
+        if (millis() - startMillis >= ONE_BIT_AT_5_BAUD )
+	    initCurrSt = MAGIC5_BIT1_2;
+        break;
+
+     case MAGIC5_BIT1_2:
+        this->kline(true); // first two bits
+	startMillis = millis();
+	initCurrSt = MAGIC5_BIT1_2_DELAY;
+	break;
+      case MAGIC5_BIT1_2_DELAY:
+        if (millis() - startMillis >= ONE_BIT_AT_5_BAUD * 2 )
+	    initCurrSt = MAGIC5_BIT3_4;
+        break;
+
+     case MAGIC5_BIT3_4:
+        this->kline(false); // second pair
+	startMillis = millis();
+	initCurrSt = MAGIC5_BIT3_4_DELAY;
+	break;
+      case MAGIC5_BIT3_4_DELAY:
+        if (millis() - startMillis >= ONE_BIT_AT_5_BAUD * 2 )
+	    initCurrSt = MAGIC5_BIT5_6;
+        break;
+
+     case MAGIC5_BIT5_6:
+        this->kline(true); // third pair
+	startMillis = millis();
+	initCurrSt = MAGIC5_BIT5_6_DELAY;
+	break;
+      case MAGIC5_BIT5_6_DELAY:
+        if (millis() - startMillis >= ONE_BIT_AT_5_BAUD * 2 )
+	    initCurrSt = MAGIC5_BIT7_8;
+        break;
+
+     case MAGIC5_BIT7_8:
+        this->kline(false); // last pair
+	startMillis = millis();
+	initCurrSt = MAGIC5_BIT7_8_DELAY;
+	break;
+      case MAGIC5_BIT7_8_DELAY:
+        if (millis() - startMillis >= ONE_BIT_AT_5_BAUD * 2 )
+	    initCurrSt = MAGIC5_BIT_STOP;
+        break;
+
+     case MAGIC5_BIT_STOP:
+        // this last 200 ms delay could also be put in the setTimeout below.
+        // But the spec says we have a stop bit.
+        this->kline(true); // stop bit
+	startMillis = millis();
+	initCurrSt = MAGIC5_BIT_STOP_DELAY;
+	break;
+      case MAGIC5_BIT_STOP_DELAY:
+        if (millis() - startMillis >= ONE_BIT_AT_5_BAUD )
+	    initCurrSt = SET_SER_PORT;
+        break;
+
+      case SET_SER_PORT:
+        // done, from now on it the bus can be treated ad a 10400 baud serial port.
+        //OBD9141println("Before setting port.");
+        this->set_port(true);
+        OBD9141println("After setting port.");
+	startMillis = millis();
+	initCurrSt = WAIT_0X55;
+	break;
+
+      case WAIT_0X55:
+	if (this->serial->available() > 0) {
+          // read first value into buffer, should be 0x55
+          this->serial->readBytes(buffer, 1);
+          OBD9141print("First read is: "); OBD9141println(buffer[0]);
+          if (buffer[0] != 0x55){
+	    initCurrSt = INIT_IDLE;
+            *success = false;
+	    initDone = true;
+	  }
+          else { 
+	    initCurrSt = WAIT_V1;
+	    startMillis = millis();
+	  }
+        }    
+	else if (millis() - startMillis >= 300+200) {
+            OBD9141println("Timeout on read 0x55.");
+	    initCurrSt = INIT_IDLE;
+	    *success = false;
+	    initDone = true;
+	}
+        break;
+
+      case WAIT_V1:
+        // we get here after we have passed receiving the first 0x55 from ecu.
+	if (this->serial->available() > 0) {
+          // read v1 into buffer, should be 0x08 or 0x94
+          this->serial->readBytes(buffer, 1);
+          v1 = buffer[0];
+          OBD9141print("read v1: "); OBD9141println(v1);
+	  initCurrSt = WAIT_V2;
+	  startMillis = millis();
+        }    
+	else if (millis() - startMillis >= 20) {
+            OBD9141println("Timeout on read v1.");
+	    initCurrSt = INIT_IDLE;
+	    *success = false;
+	    initDone = true;
+	}
+        break;
+
+      case WAIT_V2:
+	if (this->serial->available() > 0) {
+          // read v2 into buffer, should be 0x08 or 0x94
+          this->serial->readBytes(buffer, 1);
+          v2 = buffer[0];
+          OBD9141print("read v2: "); OBD9141println(v1);
+          // these two should be identical according to the spec.
+          if (v1 != v2){
+	    *success = false;
+	    initDone = true;
+          }
+	  else {
+	    initCurrSt = WAIT_W4;
+	    startMillis = millis();
+	  }
+        }    
+	else if (millis() - startMillis >= 20) {
+            OBD9141println("Timeout on read v2.");
+	    initCurrSt = INIT_IDLE;
+	    *success = false;
+	    initDone = true;
+	}
+        break;
+
+      case WAIT_W4:
+        // we obtained v1 and v2, now invert and send it back.
+        // tester waits w4 between 25 and 50 ms:
+	if (millis() - startMillis >= 30) {
+            this->write(~v2); // TODO need to modify write so it is non-blocking. Needs to be another state machine
+	    initCurrSt = WAIT_0XCC;
+	    startMillis = millis();
+	}
+        break;
+
+      case WAIT_0XCC:
+        // finally, attempt to read 0xCC from the ECU, indicating succesful init.
+	if (this->serial->available() > 0) {
+          // read final value into buffer, should be 0xcc
+          this->serial->readBytes(buffer, 1);
+          OBD9141print("Final read is: "); OBD9141println(buffer[0]);
+          if (buffer[0] != 0xcc){
+	    initCurrSt = INIT_IDLE;
+            *success = false;
+	    initDone = true;
+	  }
+          else { 
+	    initCurrSt = SUCCESS_DELAY;
+	    startMillis = millis();
+	  }
+        }    
+	else if (millis() - startMillis >= 50) {
+            OBD9141println("Timeout on read 0xcc.");
+	    initCurrSt = INIT_IDLE;
+	    *success = false;
+	    initDone = true;
+	}
+        break;
+
+      case SUCCESS_DELAY:
+        // this delay is not in the spec, but prevents requests immediately
+        // after the finishing of the init sequency.
+	if (millis() - startMillis >= OBD9141_INIT_POST_INIT_DELAY) {
+	    initCurrSt = INIT_IDLE;
+	    *success = true;
+	    initDone = true;
+	}
+        break;
     }
-    // we get here after we have passed receiving the first 0x55 from ecu.
-
-
-    this->serial->setTimeout(20); // w2 and w3 are pauses between 5 and 20 ms
-
-    uint8_t v1=0, v2=0; // sent by car:  (either 0x08 or 0x94)
-
-    // read v1
-    if (!this->serial->readBytes(buffer, 1)){
-        OBD9141println("Timeout on read v1.");
-        return false;
-    } else {
-        v1 = buffer[0];
-        OBD9141print("read v1: "); OBD9141println(v1);
-    }
-
-    // read v2
-    if (!this->serial->readBytes(buffer, 1)){
-        OBD9141println("Timeout on read v2.");
-        return false;
-    } else {
-        v2 = buffer[0];
-        OBD9141print("read v2: "); OBD9141println(v2);
-    }
-    
-    OBD9141print("v1: "); OBD9141println(v1);
-    OBD9141print("v2: "); OBD9141println(v2);
-
-    // these two should be identical according to the spec.
-    if (v1 != v2){
-        return false;
-    }
-
-    // we obtained w1 and w2, now invert and send it back.
-    // tester waits w4 between 25 and 50 ms:
-    delay(30);
-    this->write(~v2);
-    this->serial->setTimeout(50); // w5 is same as w4...  max 50 ms
-
-    // finally, attempt to read 0xCC from the ECU, indicating succesful init.
-    if (!this->serial->readBytes(buffer, 1)){
-        OBD9141println("Timeout on 0xCC read.");
-        return false;
-    } else {
-        // OBD9141print("read 0xCC?: "); 
-        // OBD9141println(buffer[0], HEX);
-        if ((buffer[0] == 0xCC)){ // done if this is inverse of 0x33
-            delay(OBD9141_INIT_POST_INIT_DELAY);
-            // this delay is not in the spec, but prevents requests immediately
-            // after the finishing of the init sequency.
-
-            return true; // yay! we are initialised.
-        } else {
-            return false;
-        }
-    }
+    return initDone;
 }
 
 bool OBD9141::initKWP(){
