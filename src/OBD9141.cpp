@@ -191,6 +191,8 @@ bool OBD9141::request9141(void* request, uint8_t request_len, uint8_t ret_len){
 // Then repeated calls, with resetStMach de-asserted, until the function returns true. ie processing is complete.
 // Then the caller must check the state of "success" to determine if the request was successful.
 // Only the first  call must have pid, mode and return_length correctly set.
+// Measured execution time of 4.4uS. I may not have caught the worst case, but I believe 4.4uS is close to the average.
+// Compare to >40mS before conversion to state machine.
 enum reqStates {REQ_IDLE, REQ_START, REQ_WAIT_DATA, REQ_WAIT_WRITE_DONE};
 int reqCurrSt = REQ_IDLE;
 unsigned long reqStartMillis = 0;
@@ -228,7 +230,7 @@ bool OBD9141::request9141_stMach(bool resetStMach, bool *success, uint8_t pid, u
         memset(this->buffer, 0, req_ret_len+1);
         reqStartMillis = millis();
         reqCurrSt = REQ_WAIT_DATA;
-        OBD9141print("request9141_stMach: Trying to read: "); OBD9141print(req_ret_len+1); OBD9141println(" bytes");
+        //OBD9141print("request9141_stMach: Trying to read: "); OBD9141print(req_ret_len+1); OBD9141println(" bytes");
       }
       break;
     case REQ_WAIT_DATA:
