@@ -70,6 +70,78 @@ void OBD9141::write(void* b, uint8_t len){
     this->serial->readBytes(tmp, len);
 }
 
+// ------------------- write_stMach --------------------
+// This is a state machine. Calls must follow a sequence.
+// First call is with resetStMach asserted.
+// Then writeStMach must be called succesively, with resetStMach de-asserted
+// until the function returns true. ie processing is complete
+// The parameters b and len only need to contain the correct contents on the first call.
+// For this function to be non-blocking, I assume that the 64-byte serial buffer 
+// will always have enough space to accept the serial chars.
+enum writeStates {WRITE_IDLE, WRITE_START, WRITE_IS_DELAY, WRITE_NEXT_CHAR, WRITE_READ_ECHO };
+int writeCurrSt = WRITE_IDLE;
+unsigned long writeStartMillis = 0;
+uint8_t writeIndex = 0;
+uint8_t write_stMach_len = 0;
+bool OBD9141::write_stMach(bool resetStMach, void* b, uint8_t len){
+  bool writeDone = false;
+
+  if (resetStMach)
+    writeCurrSt = WRITE_START;
+  switch (writeCurrSt) {
+    case WRITE_IDLE:
+      // do nothing. Wait here until start requested
+      break;
+    case WRITE_START:
+      // copy b and len to local static copies. Dangerous stuff!
+      // write one char to serial output
+      writeIndex = 0;
+      write_stMach_len = len;
+      memcpy(write_stMach_buffer, b, write_stMach_len);
+      this->serial->write(write_stMach_buffer[writeIndex++]);
+      writeStartMillis = millis();
+      writeCurrSt = WRITE_IS_DELAY;
+      break;
+    case WRITE_IS_DELAY:
+      // Wait for OBD9141_INTERSYMBOL_WAIT mS before sending the next char.
+      // When wait is over, test for write complete
+      if (millis() - writeStartMillis >= OBD9141_INTERSYMBOL_WAIT) {
+        if (writeIndex ==  write_stMach_len) {
+          writeCurrSt = WRITE_READ_ECHO;
+          writeStartMillis = millis();
+	}
+        else
+          writeCurrSt = WRITE_NEXT_CHAR;
+      }
+      break;
+    case WRITE_NEXT_CHAR:
+      // Write one char to serial output
+      this->serial->write(write_stMach_buffer[writeIndex++]);
+      writeStartMillis = millis();
+      writeCurrSt = WRITE_IS_DELAY;
+      break;
+    case WRITE_READ_ECHO:
+      // Read back all the char echos, or timeout if all the chars are not received
+      // Either way this function is done
+      if (this->serial->available() >= write_stMach_len) {
+        uint8_t tmp[write_stMach_len]; // temporary variable to read into.
+        this->serial->readBytes(tmp, write_stMach_len);
+        writeCurrSt = WRITE_IDLE;
+        writeDone = true;
+      }    
+      else if (millis() - writeStartMillis >= (unsigned long) (OBD9141_REQUEST_ECHO_MS_PER_BYTE * write_stMach_len + 
+				                                 OBD9141_WAIT_FOR_ECHO_TIMEOUT)) {
+        OBD9141println("Timeout on echo read.");
+        writeCurrSt = WRITE_IDLE;
+        writeDone = true;
+      }
+      break;
+  }
+  return writeDone;
+}
+
+
+
 bool OBD9141::request(void* request, uint8_t request_len, uint8_t ret_len)
 {
   if (use_kwp_)
@@ -114,65 +186,76 @@ bool OBD9141::request9141(void* request, uint8_t request_len, uint8_t ret_len){
     }
 }
 
+// request9141_stMach is a state machine. Calls must follow a sequence.
+// First call requires resetStMach to be asserted.
+// Then repeated calls, with resetStMach de-asserted, until the function returns true. ie processing is complete.
+// Then the caller must check the state of "success" to determine if the request was successful.
+// Only the first  call must have pid, mode and return_length correctly set.
+enum reqStates {REQ_IDLE, REQ_START, REQ_WAIT_DATA, REQ_WAIT_WRITE_DONE};
+int reqCurrSt = REQ_IDLE;
+unsigned long reqStartMillis = 0;
+uint8_t req_ret_len;
+uint8_t req_pid;
+bool OBD9141::request9141_stMach(bool resetStMach, bool *success, uint8_t pid, uint8_t mode, uint8_t return_length){
+  uint8_t request_len = 5;
+  bool reqDone = false;
+  *success = false;
+  uint8_t buf[request_len+1];
 
-
-
-
-bool OBD9141::request9141_stMach(uint8_t pid, uint8_t return_length){
-
-    bool success = false;
-    bool checksumPass = false;
-    bool serCharRxed = true;
-    uint8_t request_len = 5;
-    uint8_t ret_len = return_length + 5;
-    
-    uint8_t message[5] = {0x68, 0x6A, 0xF1, 0x01, pid};
-    // header of request is 5 long, first three are always constant.
-
-    uint8_t buf[request_len+1];
-    memcpy(buf, message, request_len); // copy request
-
-    buf[request_len] = this->checksum(&buf, request_len); // add the checksum
-
-    this->write(&buf, request_len+1);
-
-    // wait after the request, officially 30 ms, but we might as well wait
-    // for the data in the readBytes function.
-    
-    // set proper timeout
-    this->serial->setTimeout(OBD9141_REQUEST_ANSWER_MS_PER_BYTE * ret_len + OBD9141_WAIT_FOR_REQUEST_ANSWER_TIMEOUT);
-    memset(this->buffer, 0, ret_len+1);
-    
-    OBD9141print("Trying to get x bytes: "); OBD9141println(ret_len+1);
-    if (this->serial->readBytes(this->buffer, ret_len+1)){
-        // OBD9141print("R: ");
-        // for (uint8_t i=0; i< (ret_len+1); i++){
-            // OBD9141print(this->buffer[i]);OBD9141print(" ");
-        // };OBD9141println();
-        
-         checksumPass = (this->checksum(&(this->buffer[0]), ret_len) == this->buffer[ret_len]);// have data; return whether it is valid.
-    } else {
-        OBD9141println("Timeout on reading bytes.");
-        serCharRxed = false; // failed getting data.
-    }
-
-
-    if (this->buffer[4] != pid || serCharRxed == false || checksumPass == false)
-        return false;
-    else
-        return true;
-
+  if (resetStMach)
+    reqCurrSt = REQ_START;
+  switch (reqCurrSt) {
+    case REQ_IDLE:
+      // do nothing. Wait here until start requested
+    break;
+    case REQ_START: {
+      // Copy parameters that are used on multiple passes to static variables. Dangerous stuff!
+      // Format the TX message, and and start the write_stMack.
+      req_ret_len = return_length + 5;
+      req_pid = pid;
+      // header of request is 5 long, first three are always constant.
+      uint8_t message[5] = {0x68, 0x6A, 0xF1, mode, req_pid};
+      memcpy(buf, message, request_len); // copy request
+      buf[request_len] = this->checksum(&buf, request_len); // add the checksum
+      this->write_stMach(true, &buf, request_len+1);
+      reqCurrSt = REQ_WAIT_WRITE_DONE;
+      }
+      break;
+    case REQ_WAIT_WRITE_DONE:
+      // Keep calling write_stMach until all the chars have been sent and the echos received
+      // When the first arguement of write_stMach is false the other arguements are not used				      
+      if (this->write_stMach(false, &buf, 0)) {
+        memset(this->buffer, 0, req_ret_len+1);
+        reqStartMillis = millis();
+        reqCurrSt = REQ_WAIT_DATA;
+        OBD9141print("request9141_stMach: Trying to read: "); OBD9141print(req_ret_len+1); OBD9141println(" bytes");
+      }
+      break;
+    case REQ_WAIT_DATA:
+      // Wait for the echo, and read the chars, or time out if chars not received
+      // wait after the request, officially 30 ms, but we might as well wait
+      // for the data in the readBytes function.
+      if (this->serial->available() >= req_ret_len+1) {
+        this->serial->readBytes(this->buffer, req_ret_len+1);
+        bool checksumPass = (this->checksum(&(this->buffer[0]), req_ret_len) == this->buffer[req_ret_len]);// check if valid.
+        if (this->buffer[4] != req_pid || checksumPass == false)
+          *success = false;
+        else
+          *success = true;
+        reqDone = true;
+        reqCurrSt = REQ_IDLE;
+      }    
+      else if (millis() - reqStartMillis >= (unsigned long) (OBD9141_REQUEST_ANSWER_MS_PER_BYTE * req_ret_len +
+			       	OBD9141_WAIT_FOR_REQUEST_ANSWER_TIMEOUT)) {
+        OBD9141println("Timeout on pid req response.");
+        reqCurrSt = REQ_IDLE;
+        *success = false;
+        reqDone = true;
+      }
+      break;
+  }
+  return reqDone;
 }
-
-
-
-
-
-
-
-
-
-
 
 uint8_t OBD9141::request(void* request, uint8_t request_len){
     if (use_kwp_)
@@ -419,7 +502,7 @@ enum initStates {INIT_IDLE, INIT_START, IDLE_BEFORE, MAGIC5_BIT_START, MAGIC5_BI
        MAGIC5_BIT5_6, MAGIC5_BIT5_6_DELAY,
        MAGIC5_BIT7_8, MAGIC5_BIT7_8_DELAY ,
        MAGIC5_BIT_STOP, MAGIC5_BIT_STOP_DELAY ,
-       SET_SER_PORT , WAIT_0X55, WAIT_V1 , WAIT_V2 , WAIT_W4, WAIT_0XCC, SUCCESS_DELAY };
+       WAIT_CONF_WR_DONE, SET_SER_PORT , WAIT_0X55, WAIT_V1 , WAIT_V2 , WAIT_W4, WAIT_0XCC, SUCCESS_DELAY };
 int initCurrSt = INIT_IDLE;
 unsigned long startMillis = 0;
 uint8_t v1=0, v2=0; // sent by car:  (either 0x08 or 0x94)
@@ -441,8 +524,8 @@ bool OBD9141::init(bool resetStMach, bool *success){
         // do nothing. Wait here until start requested
 	break;
       case INIT_START:
+        // Disable serial port, and enable bit bang 
         use_kwp_ = false;
-        // this function performs the ISO9141 5-baud 'slow' init.
         this->set_port(false); // disable the port.
         this->kline(true);
 	initCurrSt = IDLE_BEFORE;
@@ -450,12 +533,13 @@ bool OBD9141::init(bool resetStMach, bool *success){
         OBD9141println("Before magic 5 baud.");
 	break;
       case IDLE_BEFORE:
+	// Idle for 3 seconds before starting tx of init char
         if (millis() - startMillis >= OBD9141_INIT_IDLE_BUS_BEFORE) // no traffic on bus for 3 seconds.
 	    initCurrSt = MAGIC5_BIT_START;
         break;
 
      case MAGIC5_BIT_START:
-        // next, send the startup 5 baud init..
+        // Start the ISO9141 5-baud 'slow' init.
         this->kline(false); // start
 	startMillis = millis();
 	initCurrSt = MAGIC5_BIT_START_DELAY;
@@ -466,7 +550,8 @@ bool OBD9141::init(bool resetStMach, bool *success){
         break;
 
      case MAGIC5_BIT1_2:
-        this->kline(true); // first two bits
+       	// first two bits
+        this->kline(true);
 	startMillis = millis();
 	initCurrSt = MAGIC5_BIT1_2_DELAY;
 	break;
@@ -476,7 +561,8 @@ bool OBD9141::init(bool resetStMach, bool *success){
         break;
 
      case MAGIC5_BIT3_4:
-        this->kline(false); // second pair
+	// second pair
+        this->kline(false); 
 	startMillis = millis();
 	initCurrSt = MAGIC5_BIT3_4_DELAY;
 	break;
@@ -486,7 +572,8 @@ bool OBD9141::init(bool resetStMach, bool *success){
         break;
 
      case MAGIC5_BIT5_6:
-        this->kline(true); // third pair
+       	// third pair
+        this->kline(true);
 	startMillis = millis();
 	initCurrSt = MAGIC5_BIT5_6_DELAY;
 	break;
@@ -496,7 +583,8 @@ bool OBD9141::init(bool resetStMach, bool *success){
         break;
 
      case MAGIC5_BIT7_8:
-        this->kline(false); // last pair
+       	// last pair
+        this->kline(false);
 	startMillis = millis();
 	initCurrSt = MAGIC5_BIT7_8_DELAY;
 	break;
@@ -506,6 +594,7 @@ bool OBD9141::init(bool resetStMach, bool *success){
         break;
 
      case MAGIC5_BIT_STOP:
+	// Stop bit.
         // this last 200 ms delay could also be put in the setTimeout below.
         // But the spec says we have a stop bit.
         this->kline(true); // stop bit
@@ -527,6 +616,7 @@ bool OBD9141::init(bool resetStMach, bool *success){
 	break;
 
       case WAIT_0X55:
+	// Wait for 0x55 char from ECU or timeout
 	if (this->serial->available() > 0) {
           // read first value into buffer, should be 0x55
           this->serial->readBytes(buffer, 1);
@@ -550,6 +640,7 @@ bool OBD9141::init(bool resetStMach, bool *success){
         break;
 
       case WAIT_V1:
+	// Wait for V1 or timeout
         // we get here after we have passed receiving the first 0x55 from ecu.
 	if (this->serial->available() > 0) {
           // read v1 into buffer, should be 0x08 or 0x94
@@ -568,6 +659,7 @@ bool OBD9141::init(bool resetStMach, bool *success){
         break;
 
       case WAIT_V2:
+	// Wait for V2 or timeout
 	if (this->serial->available() > 0) {
           // read v2 into buffer, should be 0x08 or 0x94
           this->serial->readBytes(buffer, 1);
@@ -595,12 +687,21 @@ bool OBD9141::init(bool resetStMach, bool *success){
         // we obtained v1 and v2, now invert and send it back.
         // tester waits w4 between 25 and 50 ms:
 	if (millis() - startMillis >= 30) {
-            this->write(~v2); // TODO need to modify write so it is non-blocking. Needs to be another state machine
-	    initCurrSt = WAIT_0XCC;
+            buffer[0] = ~v2;
+            this->write_stMach(true, &buffer[0], 1);
+	    initCurrSt = WAIT_CONF_WR_DONE;
 	    startMillis = millis();
 	}
         break;
-
+      case WAIT_CONF_WR_DONE:
+        // Keep calling write_stMach until ~V2  has been sent and the echo received
+        // When the first arguement of write_stMach is false the other arguements are not used				      
+        if (this->write_stMach(false, &buffer[0], 0)) {
+          startMillis = millis();
+          initCurrSt = WAIT_0XCC;
+        }
+        break;
+ 
       case WAIT_0XCC:
         // finally, attempt to read 0xCC from the ECU, indicating succesful init.
 	if (this->serial->available() > 0) {

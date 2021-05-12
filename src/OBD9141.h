@@ -23,7 +23,7 @@
 // as per spec.
 
 
-#define OBD9141_BUFFER_SIZE 16
+#define OBD9141_BUFFER_SIZE 32
 // maximum possible as per protocol is 256 payload, the buffer also contains
 // request and checksum, add 5 + 1 for those on top of the max desired length.
 // User needs to guarantee that the ret_len never exceeds the buffer size.
@@ -112,8 +112,12 @@ class OBD9141{
         void write(void* b, uint8_t len);
         // writes an array and removes the echo.
 
+	bool write_stMach(bool resetStMach, void* b, uint8_t len);
+        // state machine version of write. Removes echo.
 
         uint8_t buffer[OBD9141_BUFFER_SIZE]; // internal buffer.
+        uint8_t write_stMach_buffer[OBD9141_BUFFER_SIZE]; // internal buffer.
+        uint8_t request9141_buffer[OBD9141_BUFFER_SIZE]; // internal buffer.
 
         bool use_kwp_;
     public:
@@ -148,7 +152,7 @@ class OBD9141{
          */
         bool request(void* request, uint8_t request_len, uint8_t ret_len);
         bool request9141(void* request, uint8_t request_len, uint8_t ret_len);
-        bool request9141_stMach(uint8_t pid, uint8_t return_length);
+        bool request9141_stMach(bool resetStMach, bool *success, uint8_t pid, uint8_t mode, uint8_t return_length);
 
         /**
          * @brief Send a request with a variable number of return bytes.

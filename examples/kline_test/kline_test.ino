@@ -52,36 +52,55 @@ void loop(){
     // succesful before trying to request PID's.
 
     if (init_success){
-        bool res = true;
-        while(res){
+        bool reqSuccess = true;
+        //bool res = true;
+        while(reqSuccess){
           /*
             //res = obd.getCurrentPID(0x11, 1);
-            obd.request9141_stMach(0x11, 1);
+            obd.request9141_stMach(0x11, 0x01, 1);
             if (res){
                 Serial.print("Result 0x11 (throttle): ");
                 Serial.println(obd.readUint8());
             }
             */
-            //res = obd.getCurrentPID(0x01, 4);
-            res = obd.request9141_stMach(0x01, 4);
-            if (res){
-                Serial.print("Result 0x01 (supported PIDs): ");
-                Serial.println(obd.readUint32());
-            }
             
-            //res = obd.getCurrentPID(0x0C, 2);
-            res = obd.request9141_stMach(0x0c, 2);
+            obd.request9141_stMach(true, &reqSuccess, 0x00, 0x01, 4);
+            while (!obd.request9141_stMach(false, &reqSuccess, 0x00, 0x00, 0));
+            if (reqSuccess){
+                Serial.print("Result 0x00 (supported PIDs): ");
+                Serial.println(obd.readUint32(), HEX);
+            }
+           /*
+            //res = obd.getCurrentPID(0x0C, 0x01, 2);
+            res = obd.request9141_stMach(0x0c, 0x01,  2);
             if (res){
                 Serial.print("Result 0x0C (RPM): ");
                 Serial.println(obd.readUint16()/4);
             }
 
-/*
-            //res = obd.getCurrentPID(0x0D, 1);
-            res = request9141_stMach(0x0d, 1);
+            //res = obd.getCurrentPID(0x0D, 0x01, 1);
+            res = obd.request9141_stMach(0x0d, 0x01, 1);
             if (res){
                 Serial.print("Result 0x0D (speed): ");
                 Serial.println(obd.readUint8());
+            }
+
+            res = obd.request9141_stMach(0x05, 0x01, 1);
+            if (res){
+                Serial.print("Result 0x05 (Coolant temp): ");
+                Serial.println(obd.readUint8());
+            }
+
+            res = obd.request9141_stMach(0x00, 0x01, 4);
+            if (res){
+                Serial.print("Result 0xa0 (supported PIDs): ");
+                Serial.println(obd.readUint32(), HEX);
+            }
+ 
+            res = obd.request9141_stMach(0xa6, 0x01, 4);
+            if (res){
+                Serial.print("Result 0xa6, (odometer): ");
+                Serial.println(obd.readUint32(), HEX);
             }
             */
             Serial.println();
